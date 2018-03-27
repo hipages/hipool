@@ -1,0 +1,48 @@
+#defaults: &defaults
+#  working_directory: /go/src/github.com/hipages/php-fpm_exporter
+
+version: 2
+jobs:
+
+  test:
+    <<: *defaults
+    docker:
+      - image: circleci/node:8.10-stretch
+    steps:
+      - checkout
+      - run: yarn install
+      - run:
+          name: Run tests
+          command: yarn test
+      - run:
+          name: Send converage results
+          command: yarn coverage
+
+  lint:
+    <<: *defaults
+    docker:
+      - image: circleci/node:8.10-stretch
+    steps:
+      - checkout
+      - run: yarn install
+      - run:
+          name: Run tests
+          command: yarn lint
+
+
+
+workflows:
+  version: 2
+  main-build:
+    jobs:
+      - test:
+      - lint:
+      - deploy:
+          requires:
+            - test
+            - lint
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /^v.*/
