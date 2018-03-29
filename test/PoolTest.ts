@@ -13,17 +13,20 @@ function sleep(ms): Promise<void> {
 
 class MockConnFactory extends Factory<MockConn> {
   id = 0;
+  private destroyedIds = [];
   async create(): Promise<MockConn> {
     return new MockConn(this.id++);
   }
   // tslint:disable-next-line:prefer-function-over-method
   async destroy(resource: MockConn): Promise<void> {
-    // tslint:disable-next-line:no-console
-    console.log(`Destroying resource: ${resource.id}`);
+    this.destroyedIds.push(resource.id);
   }
   // tslint:disable-next-line:prefer-function-over-method
   async validate(resource: MockConn): Promise<boolean> {
     return true;
+  }
+  getDestroyedIds(): number[] {
+    return this.destroyedIds;
   }
 }
 
@@ -145,11 +148,59 @@ suite('Pool', () => {
       pool.getPoolSize().must.equal(2);
     });
   });
+  suite('Stopping', () => {
+    test('Stopping a pool destroys all the resources available in the pool', async () => {
+      const factory = new MockConnFactory();
+      const pool = new Pool<MockConn>(factory, {maxSize: 10, minSize: 5});
+      await pool.start();
+      pool.getNumAvailable().must.equal(5);
+      await pool.stop();
+      pool.getNumAvailable().must.equal(0);
+      factory.getDestroyedIds().length.must.equal(5);
+    });
+    test('Stopping a pool returns even if there are lent resources', async () => {
+      const factory = new MockConnFactory();
+      const pool = new Pool<MockConn>(factory, {maxSize: 10, minSize: 5});
+      await pool.start();
+      const resource = await pool.acquire();
+      pool.getNumAvailable().must.equal(4);
+      pool.getNumConnectionsInState(PoolResourceStatus.LENT).must.equal(1);
+      const p = pool.stop().then(() => {p['__completed'] = true; });
+      await sleep(10);
+      pool.getNumAvailable().must.equal(0);
+      factory.getDestroyedIds().length.must.equal(4);
+      pool.getNumConnectionsInState(PoolResourceStatus.LENT).must.equal(1);
+      must(p['__completed']).be.true();
+    });
+    test('Lent resources will be destroyed as soon as they are released', async () => {
+      const factory = new MockConnFactory();
+      const pool = new Pool<MockConn>(factory, {maxSize: 10, minSize: 5});
+      await pool.start();
+      const resource = await pool.acquire();
+      pool.getNumAvailable().must.equal(4);
+      pool.getNumConnectionsInState(PoolResourceStatus.LENT).must.equal(1);
+      const p = pool.stop().then(() => {p['__completed'] = true; });
+      await sleep(10);
+      pool.getNumAvailable().must.equal(0);
+      factory.getDestroyedIds().length.must.equal(4);
+      pool.getNumConnectionsInState(PoolResourceStatus.LENT).must.equal(1);
+      must(p['__completed']).be.true();
+      await pool.release(resource);
+      factory.getDestroyedIds().length.must.equal(5);
+      pool.getNumConnectionsInState(PoolResourceStatus.LENT).must.equal(0);
+    });
+  });
+
   suite('Performance', () => {
     test('Acquires no test on borrow', async () => {
       const factory = new MockConnFactory();
       const pool = new Pool<MockConn>(factory, {maxSize: 10, minSize: 3, maxWaitingClients: 10, acquireTimeoutMillis: 200});
       await pool.start();
+      const warmupAcquires = 5000;
+      for (let i = 0; i < warmupAcquires; i++) {
+        const res = await pool.acquire();
+        await pool.release(res);
+      }
       const numAcquires = 10000;
       const acum = [0, 0];
       for (let i = 0; i < numAcquires; i++) {
@@ -171,6 +222,11 @@ suite('Pool', () => {
       const factory = new MockConnFactory();
       const pool = new Pool<MockConn>(factory, {maxSize: 10, minSize: 3, maxWaitingClients: 10, acquireTimeoutMillis: 200, testOnBorrow: true});
       await pool.start();
+      const warmupAcquires = 5000;
+      for (let i = 0; i < warmupAcquires; i++) {
+        const res = await pool.acquire();
+        await pool.release(res);
+      }
       const numAcquires = 10000;
       const acum = [0, 0];
       for (let i = 0; i < numAcquires; i++) {
@@ -193,6 +249,11 @@ suite('Pool', () => {
       const factory = new MockConnFactory();
       const pool = new Pool<MockConn>(factory, {maxSize: 10, minSize: 3, maxWaitingClients: 10, acquireTimeoutMillis: 200});
       await pool.start();
+      const warmupAcquires = 5000;
+      for (let i = 0; i < warmupAcquires; i++) {
+        const res = await pool.acquire();
+        await pool.release(res);
+      }
       const startTIme = process.hrtime();
       const numAcquires = 10000;
       for (let i = 0; i < numAcquires; i++) {

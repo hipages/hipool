@@ -1,4 +1,5 @@
 import { PoolResource, PoolResourceStatus, PoolResourceStatusNames } from './PoolResource';
+import { CircularQueue } from './CircularQueue';
 
 export abstract class Factory<O> {
   async abstract create(): Promise<O>;
@@ -86,9 +87,8 @@ export class Pool<O> {
   factory: Factory<O>;
   private resourceId = 1;
 
-  private allResources: Array<PoolResource<O>> = [];
-  private availableResources: Array<PoolResource<O>> = [];
-//  private lentResources: Array<PoolResource<O>> = [];
+  private allResources: CircularQueue<PoolResource<O>>;
+  private availableResources: CircularQueue<PoolResource<O>>;
   private unfulfilledRequests: Array<UnfulfilledRequest<O>> = [];
   private status = PoolStatus.NOT_STARTED;
 
@@ -96,6 +96,8 @@ export class Pool<O> {
     this.factory = factory;
     this.poolId = `${Pool.poolIdCounter++}_`;
     this.poolOptions = {...DEFAULT_POOL_OPTIONS, ...poolOptions};
+    this.allResources = new CircularQueue<PoolResource<O>>(this.poolOptions.maxSize);
+    this.availableResources = new CircularQueue<PoolResource<O>>(this.poolOptions.maxSize);
   }
   async start() {
     if (this.status !== PoolStatus.NOT_STARTED) {
@@ -107,21 +109,27 @@ export class Pool<O> {
   }
   async stop() {
     this.switchStatus(PoolStatus.STOPPING);
-    while (this.availableResources.length > 0) {
+    // Destroy all available resources
+    while (!this.availableResources.isEmpty()) {
       const poolResource = this.availableResources.shift();
       this.destroyPoolResource(poolResource);
     }
     while (this.unfulfilledRequests.length > 0) {
-      const unfulfilledRequest = this.unfulfilledRequests.shift();
+      const unfulfilledRequest = this.unfulfilledRequests.pop();
       unfulfilledRequest.reject(new Error('Pool shutting down'));
     }
+    this.allResources.forEach((poolResource) => {
+      if (poolResource.getStatus() === PoolResourceStatus.LENT) {
+        poolResource.registerStatusChangeListerner(() => this.destroyPoolResource(poolResource));
+      }
+    });
     this.switchStatus(PoolStatus.STOPPED);
   }
   async acquire(): Promise<O> {
     if (this.status !== PoolStatus.STARTED) {
       throw new Error(`Invalid pool state (${PoolStatusNames[this.status]}), can't acquire connections`);
     }
-    while (this.availableResources.length > 0) {
+    while (!this.availableResources.isEmpty()) {
       const poolResource = this.acquireAvailablePoolResource();
       if (poolResource) {
         if (this.poolOptions.testOnBorrow) {
@@ -170,7 +178,7 @@ export class Pool<O> {
     }
   }
   public getNumAvailable(): number {
-    return this.availableResources.length;
+    return this.availableResources.getSize();
   }
   public getStatusCounts(): number[] {
     const counts = [];
@@ -179,7 +187,7 @@ export class Pool<O> {
     return counts;
   }
   public getNumConnectionsInState(status: PoolResourceStatus): number {
-    return this.allResources.reduce((acum, val) => val.getStatus() === status ? (acum + 1) : acum, 0);
+    return this.allResources.count((val) => val.getStatus() === status);
   }
   private switchStatus(newStatus: PoolStatus) {
     if (this.status !== (newStatus - 1)) {
@@ -202,10 +210,7 @@ export class Pool<O> {
   }
   private destroyPoolResource(poolResource: PoolResource<O>) {
     poolResource.setStatus(PoolResourceStatus.DESTROYED);
-    const resouceIndex = this.allResources.indexOf(poolResource);
-    if (resouceIndex >= 0) {
-      this.allResources.splice(resouceIndex, 1);
-    }
+    this.allResources.fastRemove(poolResource);
     try {
       this.factory.destroy(poolResource.getResource()); // No await on purpose.
     } catch (e) {
@@ -215,7 +220,7 @@ export class Pool<O> {
     this.checkMinSize();
   }
   public getPoolSize(): number {
-    return this.allResources.length;
+    return this.allResources.getSize();
   }
   private async checkMinSize() {
     while ((this.status === PoolStatus.STARTING || this.status === PoolStatus.STARTED) &&
@@ -234,7 +239,7 @@ export class Pool<O> {
     }
     poolResource.setStatus(PoolResourceStatus.FAST_DISPATCH);
     if (this.unfulfilledRequests.length > 0) {
-      const unfulfilledRequest = this.unfulfilledRequests.shift();
+      const unfulfilledRequest = this.unfulfilledRequests.pop();
       this.fulfillUnfulfilled(unfulfilledRequest, poolResource);
     } else {
       this.doMakeAvailable(poolResource);
@@ -253,7 +258,7 @@ export class Pool<O> {
     }
   }
   private async createNewIfPossible() {
-    if (this.allResources.length >= this.poolOptions.maxSize) {
+    if (this.allResources.isFull()) {
       return;
     }
     const resource = await this.factory.create();
