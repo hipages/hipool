@@ -1,6 +1,6 @@
 {
   "name": "hipool",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "A generic resource pooling manager",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -31,8 +31,7 @@
     "lib": "dist",
     "test": "test"
   },
-  "dependencies": {
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/node": "^8.4.0",
     "@types/source-map-support": "^0.4.0",
