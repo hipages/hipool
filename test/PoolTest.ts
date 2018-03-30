@@ -1,7 +1,7 @@
 import { suite, test, slow, timeout, skip } from 'mocha-typescript';
 import * as must from 'must';
 import { Pool, Factory } from '../src/Pool';
-import { PoolResourceStatus } from '../src/PoolResource';
+import { PoolResourceStatus, PoolResourceStatusNames } from '../src/PoolResource';
 
 class MockConn {
   constructor(public id: number) {}
@@ -35,6 +35,16 @@ suite('Pool', () => {
     test('Can start pool', async () => {
       const pool = new Pool<MockConn>(new MockConnFactory(), {maxSize: 10});
       await pool.start();
+    });
+    test('Can\'t start pool twice', async () => {
+      const pool = new Pool<MockConn>(new MockConnFactory(), {maxSize: 10});
+      await pool.start();
+      try {
+        await pool.start();
+        true.must.be.false();
+      } catch (e) {
+        e.must.be.an.error('Pool already started');
+      }
     });
     test('On startup resources are requested', async () => {
       const factory = new MockConnFactory();
@@ -78,6 +88,17 @@ suite('Pool', () => {
       resource.id.must.equal(0);
       await pool.release(resource);
       pool.getNumConnectionsInState(PoolResourceStatus.AVAILABLE).must.be.equal(2);
+    });
+
+    test('Status counts work', async () => {
+      const factory = new MockConnFactory();
+      const pool = new Pool<MockConn>(factory, {maxSize: 10, minSize: 2});
+      await pool.start();
+      const resource = await pool.acquire();
+      const expected = PoolResourceStatusNames.map(() => 0);
+      expected[PoolResourceStatus.AVAILABLE] = 1;
+      expected[PoolResourceStatus.LENT] = 1;
+      pool.getStatusCounts().must.be.eql(expected);
     });
   });
   suite('Acquiring', () => {
@@ -189,6 +210,23 @@ suite('Pool', () => {
       factory.getDestroyedIds().length.must.equal(5);
       pool.getNumConnectionsInState(PoolResourceStatus.LENT).must.equal(0);
     });
+    test('Stopping a pool fails all pending acquires', async () => {
+      const factory = new MockConnFactory();
+      const pool = new Pool<MockConn>(factory, {maxSize: 1, minSize: 1});
+      await pool.start();
+      const res1 = await pool.acquire();
+      const resp = {completed: false};
+      const res2 = pool.acquire().then(() => true.must.be.false(), (e) => {
+        e.must.be.an.error('Pool shutting down');
+        resp.completed = true;
+      });
+      await sleep(10);
+      resp.completed.must.be.false();
+      await pool.stop();
+      await sleep(0);
+      resp.completed.must.be.true();
+    });
+
   });
 
   suite('Performance', () => {
