@@ -139,6 +139,8 @@ export class Pool<O> {
           } else {
             this.destroyPoolResource(poolResource);
           }
+        } else {
+          return poolResource.getResource();
         }
       }
     }

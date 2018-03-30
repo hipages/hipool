@@ -34,10 +34,12 @@
   "dependencies": {},
   "devDependencies": {
     "@types/node": "^8.4.0",
+    "@types/generic-pool": "^3.1.2",
     "@types/source-map-support": "^0.4.0",
     "co-mocha": "^1.2.2",
     "codecov": "^3.0.0",
     "doubleagent": "^1.1.1",
+    "generic-pool": "^3.4.2",
     "husky": "^0.14.3",
     "mocha": "^5.0.5",
     "mocha-lcov-reporter": "^1.3.0",
