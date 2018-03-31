@@ -50,7 +50,7 @@ class GPMockConnFactory implements GPFactory<MockConn> {
 }
 
 const warmupAcquires = 5000;
-const numAcquires = 50000;
+const numAcquires = 20000;
 
 suite('Benchmark', () => {
   suite('hiPool', () => {
